@@ -175,8 +175,8 @@ def process_pdf(pdf_path, site_name, folder_name):
 
     # ✅ Ensure all extracted values match column order
     row_data = [
-        header_info["Site"],
-        header_info["Folder Name"],
+        header_info["Parent Folder"],
+        header_info["Child Folder"],
         header_info["File Name"],
         header_info["Patient ID"],
         header_info["Upload Date"],
@@ -335,14 +335,14 @@ def main():
     print("""
     Example Folder Structure:
         - Data
-            - Temple
-                - Subfolder1
+            - Parent Folder
+                - Child Folder
                     - PDF1.pdf
                     - PDF2.pdf
                 - Subfolder2
                     - PDF3.pdf
-            - Chicago
-                - Patient3
+            - Parent Folder
+                - Child Folder
                     - PDF4.pdf
     """)
     print("3️⃣ Press Enter after dragging and dropping the folder.")
