@@ -33,7 +33,7 @@
 Your main data folder should follow this structure:
 
 - 📁 **StratX_Data**
-  - 🗂️ **Site Name** (e.g., `Temple`, `Chicago`, `OtherSite`)
+  - 🗂️ **Group Name** (e.g., `Group 1`, `Group 2`, `Group 3`) - This name will be included in the output and may be user if you have patients from different sources, locations, etc.
     - 📂 **Subfolder** (e.g., `Folder1_with_PDFs`, `Folder2_with_PDFs`)
       - 📄 **PDF File** (e.g., `PDF1.pdf`, `PDF2.pdf`)
 
