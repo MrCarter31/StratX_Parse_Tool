@@ -1,593 +1,9 @@
-# import re
-# import os
-# import pdfplumber
-# import pandas as pd
-# from datetime import datetime
-
-# # Define lung sections for labeling
-# lung_sections = ["RUL", "RUL+RML", "RML", "RLL", "LUL", "LLL"]
-
-# # Define column headers (excluding 'Site' and 'Folder Name')
-# columns = [
-#     "File Name", "Patient ID", "Upload Date", "Scan ID", "Report Date", "CT Scan Date", "Scan Comments", "Scan Status",
-#     "Fissure Completeness RUL", "Fissure Completeness RUL+RML", "Fissure Completeness RML",
-#     "Fissure Completeness RLL", "Fissure Completeness LUL", "Fissure Completeness LLL",
-#     "Voxel Density -910 HU RUL", "Voxel Density -910 HU RUL+RML", "Voxel Density -910 HU RML",
-#     "Voxel Density -910 HU RLL", "Voxel Density -910 HU LUL", "Voxel Density -910 HU LLL",
-#     "Voxel Density -950 HU RUL", "Voxel Density -950 HU RUL+RML", "Voxel Density -950 HU RML",
-#     "Voxel Density -950 HU RLL", "Voxel Density -950 HU LUL", "Voxel Density -950 HU LLL",
-#     "Inspiratory Volume RUL", "Inspiratory Volume RUL+RML", "Inspiratory Volume RML",
-#     "Inspiraatory Volume RLL", "Inspiratory Volume LUL", "Inspiratory Volume LLL"
-# ]
-
-# def extract_header_info(text, file_name):
-#     header_data = {
-#         "File Name": file_name,
-#         "Patient ID": None, "Upload Date": None, "Scan ID": None, "Report Date": None,
-#         "CT Scan Date": None, "Scan Comments": None, "Scan Status": "✅ No Warnings"
-#     }
-
-#     patterns = {
-#         "Patient ID": r"Patient ID\s+([A-Z0-9]+)",
-#         "Upload Date": r"Upload Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
-#         "Scan ID": r"Scan ID\s+([.\d]+)",
-#         "Report Date": r"Report Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
-#         "CT Scan Date": r"CT Scan Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
-#         "Scan Comments": r"Scan Comments\s+(.+)"
-#     }
-
-#     for key, pattern in patterns.items():
-#         match = re.search(pattern, text, re.IGNORECASE)
-#         if match:
-#             header_data[key] = match.group(1).strip()
-
-#     if "The following patient order has been rejected" in text or "Not usable" in text:
-#         header_data["Scan Status"] = "⚠️ Not Usable"
-#     elif "ATTENTION" in text:
-#         header_data["Scan Status"] = "⚠️ Warning"
-
-#     return header_data
-
-# def extract_results_section(text):
-#     results_start = re.search(r"RESULTS", text)
-#     if not results_start:
-#         print("⚠️ 'RESULTS' section not found. Marking as Not Usable.")
-#         return None
-
-#     results_text = text[results_start.end():].strip().split("\n")
-
-#     extracted_data = {
-#         "Fissure Completeness": [], "Voxel Density -910 HU": [], "Voxel Density -950 HU": [], "Inspiratory Volume (ml)": []
-#     }
-
-#     last_seen_label = None
-#     collecting_numbers = False
-#     current_numbers = []
-#     i = 0
-
-#     while i < len(results_text):
-#         line = results_text[i].strip()
-#         if not line:
-#             i += 1
-#             continue
-
-#         if "% Fissure" in line:
-#             last_seen_label = "Fissure Completeness"
-#             collecting_numbers = True
-#             current_numbers = []
-#             i += 1
-#             continue
-
-#         if "% Voxel Density" in line:
-#             if i + 1 < len(results_text):
-#                 next_line = results_text[i + 1].strip()
-#                 numbers = re.findall(r"\d+", next_line)
-#                 if i + 2 < len(results_text):
-#                     full_label = f"Voxel Density {results_text[i + 2].strip()}"
-#                     last_seen_label = "Voxel Density -910 HU" if "-910" in full_label else "Voxel Density -950 HU"
-#                 extracted_data[last_seen_label] = numbers[:6]
-#             i += 3
-#             continue
-
-#         if "Inspiratory" in line:
-#             last_seen_label = "Inspiratory Volume (ml)"
-#             collecting_numbers = True
-#             current_numbers = []
-#             i += 1
-#             continue
-
-#         if collecting_numbers and re.search(r"\d+", line):
-#             numbers_found = re.findall(r"\d+", line)
-#             current_numbers.extend(numbers_found)
-
-#         if last_seen_label and current_numbers:
-#             extracted_data[last_seen_label] = current_numbers[:6]
-
-#         i += 1
-
-#     for key in extracted_data:
-#         if len(extracted_data[key]) != 6:
-#             extracted_data[key] = (extracted_data[key] + [None] * 6)[:6]
-
-#     return extracted_data
-
-# def process_pdf(pdf_path):
-#     file_name = os.path.basename(pdf_path)
-
-#     try:
-#         with pdfplumber.open(pdf_path) as pdf:
-#             text = "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
-#     except Exception as e:
-#         print(f"❌ Failed to read PDF: {pdf_path} — {e}")
-#         return None, None  # Only return early *if* the PDF failed to open
-
-#     header_info = extract_header_info(text, file_name)
-#     results_data = extract_results_section(text)
-
-#     if results_data is None:
-#         header_info["Scan Status"] = "⚠️ Not Usable"
-#         results_data = {
-#             "Fissure Completeness": [None] * 6,
-#             "Voxel Density -910 HU": [None] * 6,
-#             "Voxel Density -950 HU": [None] * 6,
-#             "Inspiratory Volume (ml)": [None] * 6
-#         }
-
-#     unique_id = f"{header_info['Patient ID']}_{header_info['Scan ID']}" if header_info["Patient ID"] and header_info["Scan ID"] else None
-
-#     row_data = [
-#         header_info["File Name"], header_info["Patient ID"], header_info["Upload Date"],
-#         header_info["Scan ID"], header_info["Report Date"], header_info["CT Scan Date"],
-#         header_info["Scan Comments"], header_info["Scan Status"]
-#     ]
-
-#     for key in ["Fissure Completeness", "Voxel Density -910 HU", "Voxel Density -950 HU", "Inspiratory Volume (ml)"]:
-#         row_data.extend(results_data.get(key, [None] * 6))
-
-#     return unique_id, row_data
-
-
-
-# def process_main_folder(main_folder, output_folder):
-#     data_dict = {}
-
-#     for root, _, files in os.walk(main_folder):
-#         for file in files:
-#             if file.lower().endswith(".pdf"):
-#                 pdf_path = os.path.join(root, file)
-#                 print(f"\n📂 Processing PDF: {pdf_path}")
-
-#                 unique_id, extracted_data = process_pdf(pdf_path)
-
-#                 if unique_id and unique_id not in data_dict:
-#                     data_dict[unique_id] = extracted_data
-#                 else:
-#                     print(f"⚠️ Duplicate entry skipped: {unique_id}")
-
-#     df = pd.DataFrame(list(data_dict.values()), columns=columns)
-#     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-#     output_csv = os.path.join(output_folder, f"StratX_Parsed_Results_{timestamp}.csv")
-
-#     os.makedirs(output_folder, exist_ok=True)
-#     df.to_csv(output_csv, index=False)
-#     print(f"\n✅ Extracted data saved to: {output_csv}")
-#     clean_csv(output_csv)
-#     print_summary_results(output_csv)
-
-# def clean_csv(csv_path):
-#     if not os.path.exists(csv_path):
-#         print(f"❌ File not found: {csv_path}")
-#         return
-
-#     df = pd.read_csv(csv_path)
-#     columns_to_check = [col for col in df.columns if col != "Scan Comments"]
-#     cleaned_df = df.dropna(subset=columns_to_check)
-#     cleaned_df.to_csv(csv_path, index=False)
-#     print(f"✅ Removed {len(df) - len(cleaned_df)} incomplete rows. Cleaned file saved.")
-
-# def print_summary_results(csv_path):
-#     df = pd.read_csv(csv_path)
-#     total_rows = len(df)
-#     no_warnings_count = df[df["Scan Status"] == "✅ No Warnings"].shape[0]
-#     warnings_count = df[df["Scan Status"].str.contains("⚠️ Warning", na=False)].shape[0]
-#     errors_count = df[df["Scan Status"].str.contains("⚠️ Not Usable", na=False)].shape[0]
-
-#     print("\n📊 Summary Report")
-#     print(f"Total Rows: {total_rows}")
-#     print(f"✅ No Warnings: {no_warnings_count}")
-#     print(f"⚠️ Warnings: {warnings_count}")
-#     print(f"⚠️ Not Usable: {errors_count}")
-
-# def main():
-#     print("🔍 StratX PDF Processor - Flexible Mode")
-#     main_folder = input("📂 Drag and drop your main folder here: ").strip().strip("'\"")
-#     main_folder = main_folder.replace("\\", "")
-
-#     if not os.path.exists(main_folder):
-#         print(f"❌ Folder not found: {main_folder}")
-#         return
-
-#     default_output_folder = os.path.join(main_folder, "StratX_Results")
-#     confirm = input(f"\nResults will be saved to: {default_output_folder}. Proceed? (yes/no): ").strip().lower()
-#     if confirm != "yes":
-#         print("❌ Operation cancelled.")
-#         return
-
-#     process_main_folder(main_folder, default_output_folder)
-
-# if __name__ == "__main__":
-#     main()
-# import re
-# import os
-# import pdfplumber
-# import pandas as pd
-# from datetime import datetime
-
-# # Define column headers
-# columns = [
-#     "File Name", "Patient ID", "Upload Date", "Scan ID", "Report Date", "CT Scan Date", "Scan Comments", "Scan Status",
-#     "Fissure Completeness RUL", "Fissure Completeness RUL+RML", "Fissure Completeness RML",
-#     "Fissure Completeness RLL", "Fissure Completeness LUL", "Fissure Completeness LLL",
-#     "Voxel Density -910 HU RUL", "Voxel Density -910 HU RUL+RML", "Voxel Density -910 HU RML",
-#     "Voxel Density -910 HU RLL", "Voxel Density -910 HU LUL", "Voxel Density -910 HU LLL",
-#     "Voxel Density -950 HU RUL", "Voxel Density -950 HU RUL+RML", "Voxel Density -950 HU RML",
-#     "Voxel Density -950 HU RLL", "Voxel Density -950 HU LUL", "Voxel Density -950 HU LLL",
-#     "Inspiratory Volume RUL", "Inspiratory Volume RUL+RML", "Inspiratory Volume RML",
-#     "Inspiratory Volume RLL", "Inspiratory Volume LUL", "Inspiratory Volume LLL"
-# ]
-
-# def extract_header_info(text, file_name):
-#     header_data = {
-#         "File Name": file_name, "Patient ID": None, "Upload Date": None, "Scan ID": None,
-#         "Report Date": None, "CT Scan Date": None, "Scan Comments": "None", "Scan Status": "✅ No Warnings"
-#     }
-#     patterns = {
-#         "Patient ID": r"Patient ID\s+([\w_.-]+)", "Scan ID": r"Scan ID\s+([\d.]+)",
-#         "Upload Date": r"Upload Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
-#         "Report Date": r"Report Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
-#         "CT Scan Date": r"(?:CT\s)?Scan Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
-#         "Scan Comments": r"Scan Comments\s*([\s\S]*?)(?=SUMMARY|RESULTS|KEY|Fissure Completeness|$)"
-#     }
-#     for key, pattern in patterns.items():
-#         match = re.search(pattern, text, re.IGNORECASE)
-#         if match:
-#             value = ' '.join(match.group(1).strip().replace('\n', ' ').split())
-#             header_data[key] = value if value else "None"
-#     if "The following patient order has been rejected" in text or "Not usable" in text:
-#         header_data["Scan Status"] = "⚠️ Not Usable"
-#     elif "ATTENTION" in text:
-#         header_data["Scan Status"] = "⚠️ Warning"
-#     return header_data
-
-# def parse_standard_format(text):
-#     """Robust parser for all standard, non-Thirona reports."""
-#     results_start = re.search(r"RESULTS", text, re.IGNORECASE)
-#     if not results_start: return None
-#     results_text = text[results_start.end():]
-#     lines = [line.strip() for line in results_text.split('\n') if line.strip()]
-#     data = {}
-#     headers_to_find = {
-#         "Fissure Completeness": "% Fissure", "Voxel Density -910 HU": "-910 HU",
-#         "Voxel Density -950 HU": "-950 HU", "Inspiratory Volume (ml)": "Inspiratory"
-#     }
-#     for key, search_str in headers_to_find.items():
-#         try:
-#             header_idx = next(i for i, line in enumerate(lines) if search_str in line)
-#             for i in range(header_idx, min(header_idx + 3, len(lines))):
-#                 numbers = re.findall(r'\d+', lines[i])
-#                 if len(numbers) >= 6:
-#                     data[key] = numbers[:6]
-#                     break
-#         except StopIteration: continue
-#     return data if len(data) == 4 else None
-
-# def parse_thirona_format(text):
-#     """Dedicated parser for the specific layout of Thirona reports based on debug output."""
-#     results_start = re.search(r"RESULTS", text, re.IGNORECASE)
-#     if not results_start: return None
-#     results_text = text[results_start.end():]
-#     lines = [line.strip() for line in results_text.split('\n') if line.strip()]
-#     data = {}
-#     try:
-#         fissure_idx = next(i for i, line in enumerate(lines) if "% Fissure" in line)
-#         data["Fissure Completeness"] = re.findall(r'\d+', lines[fissure_idx + 1])[:6]
-
-#         voxel_headers = [i for i, line in enumerate(lines) if "% Voxel Density" in line]
-#         data["Voxel Density -910 HU"] = re.findall(r'\d+', lines[voxel_headers[0] + 1])[:6]
-#         data["Voxel Density -950 HU"] = re.findall(r'\d+', lines[voxel_headers[1] + 1])[:6]
-
-#         volume_idx = next(i for i, line in enumerate(lines) if "Inspiratory" in line)
-#         data["Inspiratory Volume (ml)"] = re.findall(r'\d+', lines[volume_idx + 1])[:6]
-#     except (StopIteration, IndexError):
-#         return None
-    
-#     return data if len(data) == 4 and all(len(v) == 6 for v in data.values()) else None
-
-# def process_pdf(pdf_path):
-#     file_name = os.path.basename(pdf_path)
-#     try:
-#         with pdfplumber.open(pdf_path) as pdf:
-#             # Use the simple default extraction, which our test proved is the best
-#             full_text = "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
-#             if not full_text: raise ValueError("PDF text could not be extracted.")
-#     except Exception as e:
-#         print(f"❌ Failed to read or extract text from PDF: {file_name} — {e}")
-#         return file_name, [file_name] + [None]*7 + ["⚠️ Failed to Read"] + [None]*24
-
-#     header_info = extract_header_info(full_text, file_name)
-
-#     # Use the unique combined header to identify the Thirona report
-#     if "RUL RUL + RML RML RLL LUL LLL" in full_text:
-#         results_data = parse_thirona_format(full_text)
-#     else:
-#         results_data = parse_standard_format(full_text)
-
-#     data_keys = ["Fissure Completeness", "Voxel Density -910 HU", "Voxel Density -950 HU", "Inspiratory Volume (ml)"]
-#     if results_data is None:
-#         if header_info["Scan Status"] == "✅ No Warnings":
-#             header_info["Scan Status"] = "⚠️ Parsing Failed"
-#         results_data = {key: [None] * 6 for key in data_keys}
-
-#     unique_id = f"{header_info['Patient ID']}_{header_info['Scan ID']}" if header_info["Patient ID"] and header_info["Scan ID"] else file_name
-#     row_data = [
-#         header_info["File Name"], header_info["Patient ID"], header_info["Upload Date"],
-#         header_info["Scan ID"], header_info["Report Date"], header_info["CT Scan Date"],
-#         header_info["Scan Comments"], header_info["Scan Status"]
-#     ]
-#     for key in data_keys: row_data.extend(results_data.get(key, [None] * 6))
-#     return unique_id, row_data
-
-# def process_main_folder(main_folder, output_folder):
-#     data_dict = {}
-#     for root, _, files in os.walk(main_folder):
-#         for file in files:
-#             if file.lower().endswith(".pdf"):
-#                 pdf_path = os.path.join(root, file)
-#                 print(f"\n📂 Processing PDF: {file}")
-#                 unique_id, extracted_data = process_pdf(pdf_path)
-#                 if unique_id and unique_id not in data_dict:
-#                     data_dict[unique_id] = extracted_data
-#                 elif unique_id in data_dict:
-#                     print(f"⚠️ Duplicate entry skipped: {unique_id}")
-
-#     df = pd.DataFrame(list(data_dict.values()), columns=columns)
-#     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-#     output_csv = os.path.join(output_folder, f"StratX_Parsed_Results_{timestamp}.csv")
-#     os.makedirs(output_folder, exist_ok=True)
-#     df.to_csv(output_csv, index=False, encoding='utf-8-sig')
-#     print(f"\n✅ Extracted data saved to: {output_csv}")
-#     print_summary_results(output_csv)
-
-# def print_summary_results(csv_path):
-#     try:
-#         df = pd.read_csv(csv_path)
-#         total_rows = len(df)
-#         status_counts = df["Scan Status"].value_counts().reindex([
-#             "✅ No Warnings", "⚠️ Warning", "⚠️ Not Usable",
-#             "⚠️ Parsing Failed", "⚠️ Failed to Read"
-#         ], fill_value=0)
-#         print("\n📊 Summary Report")
-#         print(f"Total PDFs Processed: {total_rows}")
-#         print(f"✅ Successfully Parsed: {status_counts['✅ No Warnings']}")
-#         print(f"⚠️ Warnings (from PDF): {status_counts['⚠️ Warning']}")
-#         print(f"⚠️ Not Usable (from PDF): {status_counts['⚠️ Not Usable']}")
-#         print(f"⚠️ Parsing Failed (Script Error): {status_counts['⚠️ Parsing Failed']}")
-#         print(f"❌ Failed to Read (Corrupt File?): {status_counts['⚠️ Failed to Read']}")
-#     except FileNotFoundError:
-#         print(f"❌ Could not find output file to generate summary: {csv_path}")
-
-# def main():
-#     print("🔍 StratX PDF Processor - Final Version")
-#     try:
-#         main_folder_input = input("📂 Drag and drop your main folder here and press Enter: ").strip()
-#         main_folder = main_folder_input.strip("'\"")
-#         if not os.path.isdir(main_folder):
-#             print(f"❌ Folder not found: {main_folder}")
-#             return
-#         default_output_folder = os.path.join(main_folder, "StratX_Results")
-#         confirm = input(f"\nResults will be saved to: {default_output_folder}. Proceed? (yes/no): ").strip().lower()
-#         if confirm != "yes":
-#             print("❌ Operation cancelled.")
-#             return
-#         process_main_folder(main_folder, default_output_folder)
-#     except Exception as e:
-#         print(f"\nAn unexpected error occurred: {e}")
-#     finally:
-#         input("\nPress Enter to exit.")
-
-# if __name__ == "__main__":
-#     main()
-# import re
-# import os
-# import pdfplumber
-# import pandas as pd
-# from datetime import datetime
-
-# # Define column headers
-# columns = [
-#     "File Name", "Patient ID", "Upload Date", "Scan ID", "Report Date", "CT Scan Date", "Scan Comments", "Scan Status",
-#     "Fissure Completeness RUL", "Fissure Completeness RUL+RML", "Fissure Completeness RML",
-#     "Fissure Completeness RLL", "Fissure Completeness LUL", "Fissure Completeness LLL",
-#     "Voxel Density -910 HU RUL", "Voxel Density -910 HU RUL+RML", "Voxel Density -910 HU RML",
-#     "Voxel Density -910 HU RLL", "Voxel Density -910 HU LUL", "Voxel Density -910 HU LLL",
-#     "Voxel Density -950 HU RUL", "Voxel Density -950 HU RUL+RML", "Voxel Density -950 HU RML",
-#     "Voxel Density -950 HU RLL", "Voxel Density -950 HU LUL", "Voxel Density -950 HU LLL",
-#     "Inspiratory Volume RUL", "Inspiratory Volume RUL+RML", "Inspiratory Volume RML",
-#     "Inspiratory Volume RLL", "Inspiratory Volume LUL", "Inspiratory Volume LLL"
-# ]
-
-# def extract_header_info(text, file_name):
-#     header_data = {
-#         "File Name": file_name, "Patient ID": None, "Upload Date": None, "Scan ID": None,
-#         "Report Date": None, "CT Scan Date": None, "Scan Comments": "None", "Scan Status": "✅ No Warnings"
-#     }
-#     patterns = {
-#         "Patient ID": r"Patient ID\s+([\w_.-]+)", "Scan ID": r"Scan ID\s+([\d.]+)",
-#         "Upload Date": r"Upload Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
-#         "Report Date": r"Report Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
-#         "CT Scan Date": r"(?:CT\s)?Scan Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
-#         "Scan Comments": r"Scan Comments\s*([\s\S]*?)(?=SUMMARY|RESULTS|KEY|Fissure Completeness|$)"
-#     }
-#     for key, pattern in patterns.items():
-#         match = re.search(pattern, text, re.IGNORECASE)
-#         if match:
-#             value = ' '.join(match.group(1).strip().replace('\n', ' ').split())
-#             header_data[key] = value if value else "None"
-#     if "The following patient order has been rejected" in text or "Not usable" in text:
-#         header_data["Scan Status"] = "⚠️ Not Usable"
-#     elif "ATTENTION" in text:
-#         header_data["Scan Status"] = "⚠️ Warning"
-#     return header_data
-
-# def parse_standard_format(text):
-#     """Robust parser for all standard, non-Thirona reports."""
-#     results_start = re.search(r"RESULTS", text, re.IGNORECASE)
-#     if not results_start: return None
-#     results_text = text[results_start.end():]
-#     lines = [line.strip() for line in results_text.split('\n') if line.strip()]
-#     data = {}
-#     headers_to_find = {
-#         "Fissure Completeness": "% Fissure", "Voxel Density -910 HU": "-910 HU",
-#         "Voxel Density -950 HU": "-950 HU", "Inspiratory Volume (ml)": "Inspiratory"
-#     }
-#     for key, search_str in headers_to_find.items():
-#         try:
-#             header_idx = next(i for i, line in enumerate(lines) if search_str in line)
-#             for i in range(header_idx, min(header_idx + 3, len(lines))):
-#                 numbers = re.findall(r'\d+', lines[i])
-#                 if len(numbers) >= 6:
-#                     data[key] = numbers[:6]
-#                     break
-#         except StopIteration: continue
-#     return data if len(data) == 4 else None
-
-# def parse_thirona_format(text):
-#     """Dedicated parser for the specific layout of Thirona reports based on debug output."""
-#     results_start = re.search(r"RESULTS", text, re.IGNORECASE)
-#     if not results_start: return None
-#     results_text = text[results_start.end():]
-#     lines = [line.strip() for line in results_text.split('\n') if line.strip()]
-#     data = {}
-#     try:
-#         # Fissure data is on the line after "% Fissure"
-#         fissure_idx = next(i for i, line in enumerate(lines) if "% Fissure" in line)
-#         data["Fissure Completeness"] = re.findall(r'\d+', lines[fissure_idx + 1])[:6]
-
-#         # Find the two Voxel Density headers
-#         voxel_header_indices = [i for i, line in enumerate(lines) if "% Voxel Density" in line]
-#         # Data for -910 is after the first header
-#         data["Voxel Density -910 HU"] = re.findall(r'\d+', lines[voxel_header_indices[0] + 1])[:6]
-#         # Data for -950 is after the second header
-#         data["Voxel Density -950 HU"] = re.findall(r'\d+', lines[voxel_header_indices[1] + 1])[:6]
-
-#         # Inspiratory Volume data is on the line after "Inspiratory"
-#         volume_idx = next(i for i, line in enumerate(lines) if "Inspiratory" in line)
-#         data["Inspiratory Volume (ml)"] = re.findall(r'\d+', lines[volume_idx + 1])[:6]
-#     except (StopIteration, IndexError):
-#         return None
-    
-#     return data if len(data) == 4 and all(len(v) == 6 for v in data.values()) else None
-
-# def process_pdf(pdf_path):
-#     file_name = os.path.basename(pdf_path)
-#     try:
-#         with pdfplumber.open(pdf_path) as pdf:
-#             # The simple default extraction is best for all known formats
-#             full_text = "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
-#             if not full_text: raise ValueError("PDF text could not be extracted.")
-#     except Exception as e:
-#         print(f"❌ Failed to read or extract text from PDF: {file_name} — {e}")
-#         return file_name, [file_name] + [None]*7 + ["⚠️ Failed to Read"] + [None]*24
-
-#     header_info = extract_header_info(full_text, file_name)
-
-#     # Use the unique combined header to identify the Thirona report
-#     if "RUL RUL + RML RML RLL LUL LLL" in full_text:
-#         results_data = parse_thirona_format(full_text)
-#     else:
-#         results_data = parse_standard_format(full_text)
-
-#     data_keys = ["Fissure Completeness", "Voxel Density -910 HU", "Voxel Density -950 HU", "Inspiratory Volume (ml)"]
-#     if results_data is None:
-#         if header_info["Scan Status"] == "✅ No Warnings":
-#             header_info["Scan Status"] = "⚠️ Parsing Failed"
-#         results_data = {key: [None] * 6 for key in data_keys}
-
-#     unique_id = f"{header_info['Patient ID']}_{header_info['Scan ID']}" if header_info["Patient ID"] and header_info["Scan ID"] else file_name
-#     row_data = [
-#         header_info["File Name"], header_info["Patient ID"], header_info["Upload Date"],
-#         header_info["Scan ID"], header_info["Report Date"], header_info["CT Scan Date"],
-#         header_info["Scan Comments"], header_info["Scan Status"]
-#     ]
-#     for key in data_keys: row_data.extend(results_data.get(key, [None] * 6))
-#     return unique_id, row_data
-
-# def process_main_folder(main_folder, output_folder):
-#     data_dict = {}
-#     for root, _, files in os.walk(main_folder):
-#         for file in files:
-#             if file.lower().endswith(".pdf"):
-#                 pdf_path = os.path.join(root, file)
-#                 print(f"\n📂 Processing PDF: {file}")
-#                 unique_id, extracted_data = process_pdf(pdf_path)
-#                 if unique_id and unique_id not in data_dict:
-#                     data_dict[unique_id] = extracted_data
-#                 elif unique_id in data_dict:
-#                     print(f"⚠️ Duplicate entry skipped: {unique_id}")
-
-#     df = pd.DataFrame(list(data_dict.values()), columns=columns)
-#     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-#     output_csv = os.path.join(output_folder, f"StratX_Parsed_Results_{timestamp}.csv")
-#     os.makedirs(output_folder, exist_ok=True)
-#     df.to_csv(output_csv, index=False, encoding='utf-8-sig')
-#     print(f"\n✅ Extracted data saved to: {output_csv}")
-#     print_summary_results(output_csv)
-
-# def print_summary_results(csv_path):
-#     try:
-#         df = pd.read_csv(csv_path)
-#         total_rows = len(df)
-#         status_counts = df["Scan Status"].value_counts().reindex([
-#             "✅ No Warnings", "⚠️ Warning", "⚠️ Not Usable",
-#             "⚠️ Parsing Failed", "⚠️ Failed to Read"
-#         ], fill_value=0)
-#         print("\n📊 Summary Report")
-#         print(f"Total PDFs Processed: {total_rows}")
-#         print(f"✅ Successfully Parsed: {status_counts['✅ No Warnings']}")
-#         print(f"⚠️ Warnings (from PDF): {status_counts['⚠️ Warning']}")
-#         print(f"⚠️ Not Usable (from PDF): {status_counts['⚠️ Not Usable']}")
-#         print(f"⚠️ Parsing Failed (Script Error): {status_counts['⚠️ Parsing Failed']}")
-#         print(f"❌ Failed to Read (Corrupt File?): {status_counts['⚠️ Failed to Read']}")
-#     except FileNotFoundError:
-#         print(f"❌ Could not find output file to generate summary: {csv_path}")
-
-# def main():
-#     print("🔍 StratX PDF Processor - Final Version")
-#     try:
-#         main_folder_input = input("📂 Drag and drop your main folder here and press Enter: ").strip()
-#         main_folder = main_folder_input.strip("'\"")
-#         if not os.path.isdir(main_folder):
-#             print(f"❌ Folder not found: {main_folder}")
-#             return
-#         default_output_folder = os.path.join(main_folder, "StratX_Results")
-#         confirm = input(f"\nResults will be saved to: {default_output_folder}. Proceed? (yes/no): ").strip().lower()
-#         if confirm != "yes":
-#             print("❌ Operation cancelled.")
-#             return
-#         process_main_folder(main_folder, default_output_folder)
-#     except Exception as e:
-#         print(f"\nAn unexpected error occurred: {e}")
-#     finally:
-#         input("\nPress Enter to exit.")
-
-# if __name__ == "__main__":
-#     main()
-
 import re
 import os
 import pdfplumber
 import pandas as pd
 from datetime import datetime
+from typing import Optional
 
 # -----------------------------
 # Column headers (unchanged)
@@ -622,13 +38,42 @@ def normalize_text(s: str) -> str:
 # -----------------------------
 # Header extraction (unchanged, with tiny normalization)
 # -----------------------------
-def extract_header_info(text, file_name):
+# def extract_header_info(text, file_name):
+#     text = normalize_text(text)
+
+#     header_data = {
+#         "File Name": file_name, "Patient ID": None, "Upload Date": None, "Scan ID": None,
+#         "Report Date": None, "CT Scan Date": None, "Scan Comments": "None", "Scan Status": "✅ No Warnings"
+#     }
+#     patterns = {
+#         "Patient ID": r"Patient ID\s+([\w_.-]+)",
+#         "Scan ID": r"Scan ID\s+([\d.]+)",
+#         "Upload Date": r"Upload Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
+#         "Report Date": r"Report Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
+#         "CT Scan Date": r"(?:CT\s)?Scan Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
+#         "Scan Comments": r"Scan Comments\s*([\s\S]*?)(?=SUMMARY|RESULTS|KEY|Fissure Completeness|$)"
+#     }
+#     for key, pattern in patterns.items():
+#         match = re.search(pattern, text, re.IGNORECASE)
+#         if match:
+#             value = ' '.join(match.group(1).strip().replace('\n', ' ').split())
+#             header_data[key] = value if value else "None"
+
+#     # Basic status flags
+#     lower = text.lower()
+#     if "the following patient order has been rejected".lower() in lower or "not usable" in lower:
+#         header_data["Scan Status"] = "⚠️ Not Usable"
+#     elif "attention" in lower:
+#         header_data["Scan Status"] = "⚠️ Warning"
+#     return header_data
     text = normalize_text(text)
 
     header_data = {
         "File Name": file_name, "Patient ID": None, "Upload Date": None, "Scan ID": None,
         "Report Date": None, "CT Scan Date": None, "Scan Comments": "None", "Scan Status": "✅ No Warnings"
     }
+
+    # Primary (labeled) patterns
     patterns = {
         "Patient ID": r"Patient ID\s+([\w_.-]+)",
         "Scan ID": r"Scan ID\s+([\d.]+)",
@@ -638,19 +83,185 @@ def extract_header_info(text, file_name):
         "Scan Comments": r"Scan Comments\s*([\s\S]*?)(?=SUMMARY|RESULTS|KEY|Fissure Completeness|$)"
     }
     for key, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            value = ' '.join(match.group(1).strip().replace('\n', ' ').split())
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            value = ' '.join(m.group(1).strip().replace('\n', ' ').split())
             header_data[key] = value if value else "None"
+
+    # --- Fallbacks for minimal LungQ/Thirona layouts (no labels) ---
+    # 1) If dates not labeled, grab first three StratX-style dates anywhere
+    def find_all_dates(t):
+        return re.findall(r"[A-Za-z]+\.\s+\d{1,2},\s+\d{4}", t)
+
+    if not header_data["Upload Date"] or not header_data["CT Scan Date"] or not header_data["Report Date"]:
+        dates = find_all_dates(text)
+        # Heuristic: first = Upload, second = CT, third = Report (common order in these PDFs)
+        if len(dates) >= 3:
+            header_data["Upload Date"] = header_data["Upload Date"] or dates[0]
+            header_data["CT Scan Date"] = header_data["CT Scan Date"] or dates[1]
+            header_data["Report Date"] = header_data["Report Date"] or dates[2]
+
+    # 2) If Scan ID not labeled, try to find a standalone numeric token near the top
+    if not header_data["Scan ID"]:
+        # Look at the first ~500 chars for something like 5706.1 or a long integer
+        head = text[:500]
+        m_scan = re.search(r"\b(\d+(?:\.\d+)?)\b", head)
+        if m_scan:
+            header_data["Scan ID"] = m_scan.group(1)
 
     # Basic status flags
     lower = text.lower()
-    if "the following patient order has been rejected".lower() in lower or "not usable" in lower:
+    if "the following patient order has been rejected" in lower or "not usable" in lower:
         header_data["Scan Status"] = "⚠️ Not Usable"
     elif "attention" in lower:
         header_data["Scan Status"] = "⚠️ Warning"
     return header_data
 
+def extract_header_info(text, file_name):
+    """
+    Extract header metadata from StratX/Thirona/LungQ PDFs.
+    Robust to:
+      - "Patient ID" variants: "Patient ID:", "PatientID", "Patient Identifier"
+      - Patient ID on the next line
+      - IDs containing . _ - / (+ optional)
+      - Unlabeled dates (grabs first three StratX-style dates)
+      - Missing labeled Scan ID (grabs first numeric token near top)
+    """
+    text = normalize_text(text)
+
+    header_data = {
+        "File Name": file_name,
+        "Patient ID": None,
+        "Upload Date": None,
+        "Scan ID": None,
+        "Report Date": None,
+        "CT Scan Date": None,
+        "Scan Comments": "None",
+        "Scan Status": "✅ No Warnings",
+    }
+
+    # -----------------------------
+    # Primary (labeled) patterns
+    # -----------------------------
+    patterns = {
+        "Patient ID": r"Patient ID\s+([\w_.-]+)",  # keep the original (fast path)
+        "Scan ID": r"Scan ID\s+([\d.]+)",
+        "Upload Date": r"Upload Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
+        "Report Date": r"Report Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
+        "CT Scan Date": r"(?:CT\s)?Scan Date\s+([A-Za-z]+\.\s+\d{1,2},\s+\d{4})",
+        "Scan Comments": r"Scan Comments\s*([\s\S]*?)(?=SUMMARY|RESULTS|KEY|Fissure Completeness|$)",
+    }
+    for key, pattern in patterns.items():
+        m = re.search(pattern, text, re.IGNORECASE)
+        if m:
+            value = " ".join(m.group(1).strip().replace("\n", " ").split())
+            header_data[key] = value if value else "None"
+
+    # -----------------------------
+    # Patient ID: robust fallbacks
+    # -----------------------------
+    # 1) Accept common label variants, optional colon, and broader charset (adds '/' and '+')
+        # -----------------------------
+    # Patient ID: robust fallbacks
+    # -----------------------------
+    if not header_data["Patient ID"]:
+        # 0) Single-line fast path with common variants and optional colon
+        m_pid = re.search(
+            r"(?:Patient\s*ID|PatientID|Patient\s*Identifier)\s*:?\s*([A-Za-z0-9._/\-+]+)",
+            text,
+            re.IGNORECASE,
+        )
+        if m_pid:
+            header_data["Patient ID"] = m_pid.group(1)
+
+    if not header_data["Patient ID"]:
+        lines = [ln.strip() for ln in text.split("\n")]
+
+        # 1) Find the label line, allowing the label to be broken across lines (e.g., "Patient" / "ID")
+        label_idxs = []
+        for i, ln in enumerate(lines):
+            if re.search(r"^(?:Patient\s*ID|PatientID|Patient\s*Identifier)\b", ln, re.IGNORECASE):
+                label_idxs.append(i)
+            else:
+                # handle "Patient" on one line and "ID" (or "Identifier") at the start of the next
+                if re.fullmatch(r"Patient\s*$", ln, re.IGNORECASE) and i + 1 < len(lines):
+                    if re.match(r"^(?:ID|Identifier)\b", lines[i + 1], re.IGNORECASE):
+                        label_idxs.append(i)
+
+        # 2) From each label index, stitch the next few lines into a candidate string
+        def assemble_candidate_value(start_idx: int) -> Optional[str]:
+            # Collect up to 3 subsequent non-empty lines
+            chunk = []
+            for j in range(start_idx + 1, min(start_idx + 5, len(lines))):
+                if lines[j]:
+                    chunk.append(lines[j])
+
+            if not chunk:
+                return None
+
+            # Repair common hyphenated wraps across line breaks: "ABC-" + "\n" + "123" -> "ABC-123"
+            stitched = "\n".join(chunk)
+            stitched = re.sub(r"-\s*\n\s*", "-", stitched)  # join hyphen-wrapped splits
+            stitched = re.sub(r"\s*\n\s*", " ", stitched)   # collapse remaining newlines to spaces
+
+            # Now extract the first token that looks like an ID (allow . _ - / +)
+            m_val = re.search(r"([A-Za-z0-9._/\-+]{2,})", stitched)
+            return m_val.group(1) if m_val else None
+
+        for idx in label_idxs:
+            candidate = assemble_candidate_value(idx)
+            if candidate:
+                header_data["Patient ID"] = candidate
+                break
+
+    # 3) Filename fallback (e.g., StratX_582_635694_0027.pdf -> 582) if still missing
+    if not header_data["Patient ID"]:
+        name_only = os.path.splitext(file_name)[0]
+        tokens = re.split(r"[_\s]+", name_only)
+        for tok in tokens:
+            if tok.lower() in {"stratx", "lungq", "report"}:
+                continue
+            if re.fullmatch(r"\d{2,}", tok):  # take first >=2-digit token
+                header_data["Patient ID"] = tok
+                break
+
+    # Optional last-resort: use the file stem if you prefer a non-empty Patient ID
+    # if not header_data["Patient ID"]:
+    #     header_data["Patient ID"] = os.path.splitext(file_name)[0]
+
+    # -----------------------------
+    # Unlabeled date fallback
+    # -----------------------------
+    def find_all_dates(t):
+        return re.findall(r"[A-Za-z]+\.\s+\d{1,2},\s+\d{4}", t)
+
+    if not header_data["Upload Date"] or not header_data["CT Scan Date"] or not header_data["Report Date"]:
+        dates = find_all_dates(text)
+        # Heuristic ordering commonly seen: Upload, CT, Report
+        if len(dates) >= 3:
+            header_data["Upload Date"] = header_data["Upload Date"] or dates[0]
+            header_data["CT Scan Date"] = header_data["CT Scan Date"] or dates[1]
+            header_data["Report Date"] = header_data["Report Date"] or dates[2]
+
+    # -----------------------------
+    # Scan ID fallback (unlabeled)
+    # -----------------------------
+    if not header_data["Scan ID"]:
+        head = text[:500]  # search near top
+        m_scan = re.search(r"\b(\d+(?:\.\d+)?)\b", head)  # e.g., 5706.1
+        if m_scan:
+            header_data["Scan ID"] = m_scan.group(1)
+
+    # -----------------------------
+    # Status flags
+    # -----------------------------
+    lower = text.lower()
+    if "the following patient order has been rejected" in lower or "not usable" in lower:
+        header_data["Scan Status"] = "⚠️ Not Usable"
+    elif "attention" in lower:
+        header_data["Scan Status"] = "⚠️ Warning"
+
+    return header_data
 # -----------------------------
 # Helpers & universal parser
 # -----------------------------
@@ -665,71 +276,209 @@ def find_numbers_after(lines, idx, min_count=6, lookahead=8):
             return [n for n in nums[:6]]
     return None
 
+# def parse_results_universal(text):
+#     """
+#     Version-agnostic RESULTS parser for both StratX (Voiant) and Thirona/LungQ layouts.
+
+#     Strategy:
+#       - Start scanning after 'RESULTS'
+#       - Find '% Fissure' → numbers
+#       - Find *two* '% Voxel Density' sections → numbers
+#       - Assign the larger-sum set to -910 and the other to -950
+#       - Find 'Inspiratory' → numbers
+
+#     Returns a dict with keys:
+#       'Fissure Completeness', 'Voxel Density -910 HU',
+#       'Voxel Density -950 HU', 'Inspiratory Volume (ml)'
+#     (If some blocks are missing, the dict can be partial.)
+#     """
+#     text = normalize_text(text)
+
+#     m = re.search(r"RESULTS", text, re.IGNORECASE)
+#     if not m:
+#         return None
+
+#     # Normalize lines after RESULTS
+#     lines = [ln.strip() for ln in text[m.end():].split('\n') if ln.strip()]
+#     data = {}
+
+#     # 1) Fissure Completeness
+#     try:
+#         fiss_idx = next(i for i, ln in enumerate(lines) if re.search(r'%\s*Fissure', ln, re.IGNORECASE))
+#         fiss_vals = find_numbers_after(lines, fiss_idx)
+#         if fiss_vals:
+#             data["Fissure Completeness"] = fiss_vals
+#     except StopIteration:
+#         pass
+
+#     # 2) Voxel Density (two sections)
+#     vox_indices = [i for i, ln in enumerate(lines) if re.search(r'%\s*Voxel\s*Density', ln, re.IGNORECASE)]
+#     vox_vals = []
+#     for vi in vox_indices[:2]:
+#         arr = find_numbers_after(lines, vi)
+#         if arr:
+#             # store as ints for comparison, return strings later
+#             vox_vals.append(list(map(int, arr)))
+
+#     if len(vox_vals) == 2:
+#         # The -910 HU set should be ≥ the -950 HU set overall.
+#         sum0, sum1 = sum(vox_vals[0]), sum(vox_vals[1])
+#         if sum0 >= sum1:
+#             vox910, vox950 = vox_vals[0], vox_vals[1]
+#         else:
+#             vox910, vox950 = vox_vals[1], vox_vals[0]
+#         data["Voxel Density -910 HU"] = list(map(str, vox910))
+#         data["Voxel Density -950 HU"] = list(map(str, vox950))
+
+#     # 3) Inspiratory Volume
+#     try:
+#         vol_idx = next(i for i, ln in enumerate(lines) if re.search(r'Inspiratory', ln, re.IGNORECASE))
+#         vol_vals = find_numbers_after(lines, vol_idx)
+#         if vol_vals:
+#             data["Inspiratory Volume (ml)"] = vol_vals
+#     except StopIteration:
+#         pass
+
+#     return data
 def parse_results_universal(text):
     """
-    Version-agnostic RESULTS parser for both StratX (Voiant) and Thirona/LungQ layouts.
-
-    Strategy:
-      - Start scanning after 'RESULTS'
-      - Find '% Fissure' → numbers
-      - Find *two* '% Voxel Density' sections → numbers
-      - Assign the larger-sum set to -910 and the other to -950
-      - Find 'Inspiratory' → numbers
-
-    Returns a dict with keys:
-      'Fissure Completeness', 'Voxel Density -910 HU',
-      'Voxel Density -950 HU', 'Inspiratory Volume (ml)'
-    (If some blocks are missing, the dict can be partial.)
+    Version-agnostic parser:
+      1) Prefer labeled parsing after 'RESULTS' (your original logic),
+         with a fix to ensure -910/-950 come from DISTINCT rows.
+      2) If 'RESULTS' absent or labeled parse is incomplete, use an unlabeled fallback
+         that classifies six-number rows by shape.
     """
     text = normalize_text(text)
 
+    # -----------------------------
+    # Labeled path (original)
+    # -----------------------------
     m = re.search(r"RESULTS", text, re.IGNORECASE)
-    if not m:
-        return None
-
-    # Normalize lines after RESULTS
-    lines = [ln.strip() for ln in text[m.end():].split('\n') if ln.strip()]
     data = {}
 
-    # 1) Fissure Completeness
-    try:
-        fiss_idx = next(i for i, ln in enumerate(lines) if re.search(r'%\s*Fissure', ln, re.IGNORECASE))
-        fiss_vals = find_numbers_after(lines, fiss_idx)
-        if fiss_vals:
-            data["Fissure Completeness"] = fiss_vals
-    except StopIteration:
-        pass
+    def try_labeled():
+        if not m:
+            return {}
 
-    # 2) Voxel Density (two sections)
-    vox_indices = [i for i, ln in enumerate(lines) if re.search(r'%\s*Voxel\s*Density', ln, re.IGNORECASE)]
-    vox_vals = []
-    for vi in vox_indices[:2]:
-        arr = find_numbers_after(lines, vi)
-        if arr:
-            # store as ints for comparison, return strings later
-            vox_vals.append(list(map(int, arr)))
+        lines = [ln.strip() for ln in text[m.end():].split('\n') if ln.strip()]
+        out = {}
 
-    if len(vox_vals) == 2:
-        # The -910 HU set should be ≥ the -950 HU set overall.
-        sum0, sum1 = sum(vox_vals[0]), sum(vox_vals[1])
-        if sum0 >= sum1:
-            vox910, vox950 = vox_vals[0], vox_vals[1]
-        else:
-            vox910, vox950 = vox_vals[1], vox_vals[0]
-        data["Voxel Density -910 HU"] = list(map(str, vox910))
-        data["Voxel Density -950 HU"] = list(map(str, vox950))
+        # 1) Fissure Completeness (original)
+        try:
+            fiss_idx = next(i for i, ln in enumerate(lines) if re.search(r'%\s*Fissure', ln, re.IGNORECASE))
+            fiss_vals = find_numbers_after(lines, fiss_idx)
+            if fiss_vals:
+                out["Fissure Completeness"] = fiss_vals
+        except StopIteration:
+            pass
 
-    # 3) Inspiratory Volume
-    try:
-        vol_idx = next(i for i, ln in enumerate(lines) if re.search(r'Inspiratory', ln, re.IGNORECASE))
-        vol_vals = find_numbers_after(lines, vol_idx)
-        if vol_vals:
-            data["Inspiratory Volume (ml)"] = vol_vals
-    except StopIteration:
-        pass
+        # 2) Voxel Density (two sections) — ensure DISTINCT rows
+        vox_indices = [i for i, ln in enumerate(lines) if re.search(r'%\s*Voxel\s*Density', ln, re.IGNORECASE)]
+        rows = []
+        last_row = None
+        for vi in vox_indices[:2]:
+            arr = find_numbers_after(lines, vi)
+            # If we got a row and it equals the previous one, keep scanning forward
+            if arr and last_row and arr == last_row:
+                # walk forward from vi+1 to find the next distinct integer row
+                for j in range(vi + 1, min(vi + 10, len(lines))):
+                    toks = re.findall(r"-?\d+(?:\.\d+)?", lines[j])
+                    if len(toks) >= 6 and all("." not in t for t in toks[:6]):
+                        candidate = [int(t) for t in toks[:6]]
+                        if candidate != list(map(int, last_row)):
+                            arr = list(map(str, candidate))
+                            break
+            if arr:
+                rows.append(list(map(int, arr)))
+                last_row = arr
 
-    return data
+        if len(rows) == 2:
+            # Larger-sum = -910; other = -950
+            a, b = rows[0], rows[1]
+            if sum(a) >= sum(b):
+                vox910, vox950 = a, b
+            else:
+                vox910, vox950 = b, a
+            out["Voxel Density -910 HU"] = [str(v) for v in vox910]
+            out["Voxel Density -950 HU"] = [str(v) for v in vox950]
 
+        # 3) Inspiratory Volume (original)
+        try:
+            vol_idx = next(i for i, ln in enumerate(lines) if re.search(r'Inspiratory', ln, re.IGNORECASE))
+            vol_vals = find_numbers_after(lines, vol_idx)
+            if vol_vals:
+                out["Inspiratory Volume (ml)"] = vol_vals
+        except StopIteration:
+            pass
+
+        return out
+
+    labeled = try_labeled()
+    # If labeled found anything at all, prefer it and return (keeps your prior success rate)
+    if labeled:
+        return labeled
+
+    # -----------------------------
+    # Unlabeled fallback (minimal PDFs)
+    # -----------------------------
+    lines_all = [ln.strip() for ln in text.split('\n') if ln.strip()]
+
+    # Collect all six-number rows from the whole doc
+    six_rows = []
+    for ln in lines_all:
+        toks = re.findall(r"-?\d+(?:\.\d+)?", ln)
+        if len(toks) >= 6:
+            six_rows.append(toks[:6])
+
+    # Fissure: first decimal row that looks like percentages
+    fiss = None
+    for row in six_rows:
+        if any("." in t for t in row):
+            try:
+                vals = [float(x) for x in row]
+                if all(0.0 <= v <= 100.0 for v in vals):
+                    fiss = row
+                    break
+            except Exception:
+                continue
+    if fiss:
+        data["Fissure Completeness"] = fiss
+
+    # Voxel density: two DISTINCT integer rows with all values <= 100
+    int_rows = []
+    seen = set()
+    for row in six_rows:
+        if all("." not in t for t in row):
+            try:
+                ints = [int(t) for t in row]
+            except ValueError:
+                continue
+            if all(0 <= v <= 100 for v in ints):
+                tpl = tuple(ints)
+                if tpl not in seen:
+                    seen.add(tpl)
+                    int_rows.append(ints)
+
+    if len(int_rows) >= 2:
+        int_rows.sort(key=sum, reverse=True)
+        data["Voxel Density -910 HU"] = [str(v) for v in int_rows[0]]
+        data["Voxel Density -950 HU"] = [str(v) for v in int_rows[1]]
+
+    # Inspiratory Volume: first plausible volume-like row
+    vol = None
+    for row in six_rows:
+        if all("." not in t for t in row):
+            try:
+                ints = [int(t) for t in row]
+            except ValueError:
+                continue
+            if all(100 <= v <= 20000 for v in ints):  # 3–5 digits typical
+                vol = [str(v) for v in ints]
+                break
+    if vol:
+        data["Inspiratory Volume (ml)"] = vol
+
+    return data if data else None
 # -----------------------------
 # PDF processing
 # -----------------------------
