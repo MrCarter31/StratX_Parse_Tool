@@ -548,7 +548,8 @@ def process_main_folder(main_folder, output_folder):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_csv = os.path.join(output_folder, f"StratX_Parsed_Results_{timestamp}.csv")
     os.makedirs(output_folder, exist_ok=True)
-    df.to_csv(output_csv, index=False, encoding='utf-8-sig')
+    # df.to_csv(output_csv, index=False, encoding='utf-8-sig')
+    df.to_csv(output_csv, index=False, encoding='utf-8-sig', sep=';')
     print(f"\n✅ Extracted data saved to: {output_csv}")
     print_summary_results(output_csv)
 
